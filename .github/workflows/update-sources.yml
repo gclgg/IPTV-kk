@@ -6,14 +6,18 @@ on:
     - cron: '0 22 * * *'
   workflow_dispatch: # 允许在 Actions 页面手动触发
     inputs:
-      include_new:
-        description: '引入仓库原本没有的新频道'
-        type: boolean
-        default: false
-      max_per_channel:
-        description: '单个频道最多保留的源条数'
+      top_n:
+        description: '每个频道保留的源数量'
         type: string
-        default: '6'
+        default: '5'
+      candidates:
+        description: '每个频道参与测速的候选数量'
+        type: string
+        default: '40'
+      output:
+        description: '输出文件名'
+        type: string
+        default: '精选源.txt'
 
 permissions:
   contents: write
@@ -25,7 +29,7 @@ concurrency:
 jobs:
   update:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
 
     steps:
       - name: 检出仓库
@@ -36,21 +40,37 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: 抓取并合并最新节目源
+      - name: 准备 ffmpeg（测速与分辨率检测）
+        run: |
+          if ! command -v ffprobe >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq ffmpeg
+          fi
+          ffprobe -version | head -1
+
+      - name: 抓取、测速、排名并生成精选源
         env:
-          IPTVKK_INCLUDE_NEW: ${{ github.event.inputs.include_new || 'false' }}
-          IPTVKK_MAX_PER_CHANNEL: ${{ github.event.inputs.max_per_channel || '6' }}
-        run: python scripts/update_sources.py
+          IPTVKK_TOP_N: ${{ github.event.inputs.top_n || '5' }}
+          IPTVKK_CANDIDATES: ${{ github.event.inputs.candidates || '40' }}
+          IPTVKK_OUTPUT: ${{ github.event.inputs.output || '精选源.txt' }}
+        run: |
+          # 兼容脚本放在 scripts/ 或仓库根两种布局
+          if [ -f scripts/update_sources.py ]; then
+            python scripts/update_sources.py
+          else
+            python update_sources.py
+          fi
 
       - name: 提交变更
         run: |
           set -e
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if [ -z "$(git status --porcelain iptv.txt ipv4.txt)" ]; then
-            echo "::notice::本次没有可更新的节目源，跳过提交"
+          FILE="${{ github.event.inputs.output || '精选源.txt' }}"
+          if [ -z "$(git status --porcelain -- "$FILE")" ]; then
+            echo "::notice::本次没有可更新的内容，跳过提交"
             exit 0
           fi
-          git add iptv.txt ipv4.txt
-          git commit -m "chore: 每日更新节目源 $(TZ=Asia/Shanghai date +'%Y-%m-%d %H:%M')"
+          git add "$FILE"
+          git commit -m "chore: 每日更新精选节目源 $(TZ=Asia/Shanghai date +'%Y-%m-%d %H:%M')"
           git push
