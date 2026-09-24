@@ -1,15 +1,8 @@
-更新时间: 2026-09-24 10:32:23（北京时间）
-
-央视频道,#genre#
-CCTV3,http://120.237.39.10:9901/tsfile/live/1017_1.m3u8?key=txiptv&playlive=1&down=1$328KB/s 576p 评分26.4
-CCTV5+,http://hiliu.myds.me:18088/rtp/239.254.96.234:9484$8KB/s 1080p 评分40.1
+更新时间: 2026-09-24 11:32:18（北京时间）
 
 凤凰卫视,#genre#
-凤凰卫视,http://bobohome.ignorelist.com:20247/fengshows?id=2.m3u8$215KB/s 720p 评分33.6
-凤凰卫视,http://bobohome.ignorelist.com:20247/fengshows?id=3.m3u8$124KB/s 720p 评分32.9
-凤凰卫视,http://218.206.193.218:8888/hls/67/index.m3u8$754KB/s 576p 评分29.5
-凤凰卫视,http://218.206.193.218:8888/hls/66/index.m3u8$498KB/s 576p 评分27.6
-凤凰卫视,http://183.237.95.108:9901/tsfile/live/1103_1.m3u8?key=txiptv&playlive=0&authid=0$216KB/s 576p 评分25.6
+凤凰卫视,http://bobohome.ignorelist.com:20247/fengshows?id=3.m3u8$114KB/s 720p 评分32.8
+凤凰卫视,http://218.206.193.218:8888/hls/67/index.m3u8$608KB/s 576p 评分28.5
 
 凤凰资讯,#genre#
-凤凰资讯台,http://bobohome.ignorelist.com:20247/fengshows?id=1.m3u8$575KB/s 720p 评分36.2
+凤凰资讯台,http://bobohome.ignorelist.com:20247/fengshows?id=1.m3u8$230KB/s 720p 评分33.7
