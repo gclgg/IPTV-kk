@@ -36,11 +36,13 @@ HTTP_TIMEOUT = 30
 # 每个频道最终保留几个源
 TOP_N = int(os.environ.get("IPTVKK_TOP_N", "5"))
 # 每个频道最多拿多少个候选去测速（控制总耗时）
-CANDIDATES_PER_CHANNEL = int(os.environ.get("IPTVKK_CANDIDATES", "40"))
+CANDIDATES_PER_CHANNEL = int(os.environ.get("IPTVKK_CANDIDATES", "15"))
 # 测速并发数
-WORKERS = int(os.environ.get("IPTVKK_WORKERS", "16"))
+WORKERS = int(os.environ.get("IPTVKK_WORKERS", "24"))
 # 单个源拉流测速的秒数
-SPEED_SECONDS = int(os.environ.get("IPTVKK_SPEED_SECONDS", "4"))
+SPEED_SECONDS = int(os.environ.get("IPTVKK_SPEED_SECONDS", "3"))
+# 总时间预算（秒）：到点就停止测速，用已完成的结果出文件，保证一定有产出
+MAX_SECONDS = int(os.environ.get("IPTVKK_MAX_SECONDS", "1500"))
 # 输出文件（改成 iptv.txt / ipv4.txt 即可直接覆盖原文件）
 OUTPUT_FILE = os.environ.get("IPTVKK_OUTPUT", "精选源.txt")
 # 是否在 URL 后面用 $ 备注带上速度/分辨率
@@ -48,8 +50,13 @@ SHOW_METRICS = os.environ.get("IPTVKK_SHOW_METRICS", "1") != "0"
 # 调试用：跳过真实测速，只验证筛选和输出格式
 DRY_RUN = os.environ.get("IPTVKK_DRY_RUN", "0") == "1"
 
-FFPROBE_TIMEOUT = 12
-FFMPEG_TIMEOUT = SPEED_SECONDS + 12
+# 预检：HTTP 连通性快速探测，连不上的直接淘汰，避免浪费后面的完整测速
+PREFILTER = os.environ.get("IPTVKK_PREFILTER", "1") != "0"
+PREFILTER_TIMEOUT = int(os.environ.get("IPTVKK_PREFILTER_TIMEOUT", "6"))
+PREFILTER_WORKERS = int(os.environ.get("IPTVKK_PREFILTER_WORKERS", "48"))
+
+FFPROBE_TIMEOUT = 8
+FFMPEG_TIMEOUT = SPEED_SECONDS + 8
 
 UPSTREAMS = [
     "https://raw.githubusercontent.com/fanmingming/live/main/tv/m3u/itv.m3u",
@@ -57,6 +64,8 @@ UPSTREAMS = [
     "https://raw.githubusercontent.com/YanG-1989/m3u/main/Gather.m3u",
     "https://raw.githubusercontent.com/kimwang1978/collect-tv-txt/main/bbxx365_lite.txt",
 ]
+
+START = time.time()  # 用于打印各阶段耗时
 
 BAD_EXT = (".mp4", ".mkv", ".avi", ".flv", ".png", ".jpg", ".jpeg", ".gif", ".webp")
 BAD_KW = ("disclaimer", "about", "免责", "readme", "github.com", "gitee.com", "gitlab.com")
@@ -163,6 +172,23 @@ def is_valid(url):
 # ---------------------------------------------------------------------------
 def run(cmd, timeout):
     return subprocess.run(cmd, capture_output=True, timeout=timeout)
+
+
+def reachable(url):
+    """HTTP 连通性快速探测：只连一下读一小段，连不上就淘汰"""
+    if url.lower().startswith("rtsp://"):
+        return True  # rtsp 不走 HTTP 预检，交给 ffmpeg 判断
+    try:
+        req = urllib.request.Request(url, headers={
+            "User-Agent": UA,
+            "Range": "bytes=0-16384",
+            "Accept": "*/*",
+        })
+        with urllib.request.urlopen(req, timeout=PREFILTER_TIMEOUT) as r:
+            r.read(2048)
+            return True
+    except Exception:
+        return False
 
 
 def measure(url):
@@ -282,13 +308,42 @@ def build_output(results, now):
     return lines, kept
 
 
+def prefilter(jobs, deadline):
+    """并发做 HTTP 连通性预检，淘汰连不上的源，避免后面逐个等满超时"""
+    def check(item):
+        return item, reachable(item[2])
+
+    alive, done = [], 0
+    pool = ThreadPoolExecutor(max_workers=min(PREFILTER_WORKERS, max(len(jobs), 1)))
+    futures = [pool.submit(check, it) for it in jobs]
+    try:
+        remaining = max(deadline - time.time(), 5)
+        for fut in as_completed(futures, timeout=remaining):
+            item, good = fut.result()
+            done += 1
+            if done % 100 == 0:
+                print(f"  预检进度 {done}/{len(jobs)}（耗时 {int(time.time() - START)}s）")
+            if good:
+                alive.append(item)
+    except Exception:
+        print("  预检到达时限，使用已完成的预检结果")
+        for f in futures:
+            f.cancel()
+    pool.shutdown(wait=False, cancel_futures=True)
+    return alive
+
+
 def main():
+    global START
+    START = time.time()
+    deadline = START + MAX_SECONDS
     now = datetime.now(CST).strftime("%Y-%m-%d %H:%M:%S")
     print(f"IPTV-kk 精选源更新 | {now}（北京时间）")
+    print(f"  时间预算 {MAX_SECONDS}s，候选上限 {CANDIDATES_PER_CHANNEL}/频道，并发 {WORKERS}")
     if DRY_RUN:
         print("!! DRY_RUN 模式：不做真实测速")
 
-    print("\n[1/3] 抓取上游并筛选频道")
+    print("\n[1/4] 抓取上游并筛选频道")
     buckets = collect_candidates()
     total = sum(len(v) for v in buckets.values())
     print(f"  命中频道 {len(buckets)} 个，候选源 {total} 条")
@@ -300,26 +355,45 @@ def main():
     for (group, ch), urls in buckets.items():
         for u in urls[:CANDIDATES_PER_CHANNEL]:
             jobs.append((group, ch, u))
-    print(f"\n[2/3] 测速与分辨率检测（{len(jobs)} 条，并发 {WORKERS}）")
 
-    results, done = {}, 0
-    with ThreadPoolExecutor(max_workers=WORKERS) as pool:
-        futures = {pool.submit(measure, u): (g, c, u) for g, c, u in jobs}
-        for fut in as_completed(futures):
+    print(f"\n[2/4] 连通性预检（{len(jobs)} 条）")
+    if PREFILTER and not DRY_RUN:
+        jobs = prefilter(jobs, deadline)
+        print(f"  预检通过 {len(jobs)} 条（耗时 {int(time.time() - START)}s）")
+    else:
+        print("  已跳过预检")
+
+    if not jobs:
+        print("  没有源通过预检，放弃写入")
+        return 1
+
+    print(f"\n[3/4] 测速与分辨率检测（{len(jobs)} 条，并发 {WORKERS}）")
+    results, done, timed_out = {}, 0, False
+    pool = ThreadPoolExecutor(max_workers=WORKERS)
+    futures = {pool.submit(measure, u): (g, c, u) for g, c, u in jobs}
+    try:
+        remaining = max(deadline - time.time(), 5)
+        for fut in as_completed(futures, timeout=remaining):
             g, c, u = futures[fut]
             try:
                 m = fut.result()
             except Exception:
                 m = {"width": 0, "height": 0, "speed_kbps": 0.0, "ok": False}
             done += 1
-            if done % 25 == 0:
-                print(f"  进度 {done}/{len(jobs)}")
+            if done % 20 == 0:
+                print(f"  进度 {done}/{len(jobs)}（耗时 {int(time.time() - START)}s）")
             if m.get("height", 0) > 0 and m.get("speed_kbps", 0) > 0:
                 sc = score(m["width"], m["height"], m["speed_kbps"])
                 if sc > 0:
                     results.setdefault((g, c), []).append((sc, m["speed_kbps"], m["height"], u))
+    except Exception:
+        timed_out = True
+        print(f"  !! 到达 {MAX_SECONDS}s 时间预算，取消未完成的测速，用已有结果出文件")
+        for f in futures:
+            f.cancel()
+    pool.shutdown(wait=False, cancel_futures=True)
 
-    print("\n[3/3] 排名并输出")
+    print("\n[4/4] 排名并输出")
     lines, kept = build_output(results, now)
     if kept == 0:
         print("  没有任何源通过测速（网络不通或 ffmpeg 缺失），放弃写入")
@@ -328,11 +402,14 @@ def main():
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         f.write("\n".join(lines).rstrip() + "\n")
 
-    print(f"  ✔ 已写入 {OUTPUT_FILE}，共 {kept} 条源")
+    print(f"  ✔ 已写入 {OUTPUT_FILE}，共 {kept} 条源（总耗时 {int(time.time() - START)}s）")
     for group in GROUP_ORDER:
         chans = sorted([c for (g, c) in results if g == group], key=chan_sort_key)
         if chans:
             print(f"    {group}: {len(chans)} 个频道 -> {', '.join(chans[:12])}")
+    if timed_out:
+        # 残留的测速线程可能还卡在网络等待，直接退出，不等它们
+        os._exit(0)
     return 0
 
 
