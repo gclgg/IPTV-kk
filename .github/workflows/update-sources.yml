@@ -1,0 +1,56 @@
+name: 每日更新节目源
+
+on:
+  schedule:
+    # GitHub Actions 使用 UTC 时间：每天 22:00 UTC = 北京时间次日 06:00
+    - cron: '0 22 * * *'
+  workflow_dispatch: # 允许在 Actions 页面手动触发
+    inputs:
+      include_new:
+        description: '引入仓库原本没有的新频道'
+        type: boolean
+        default: false
+      max_per_channel:
+        description: '单个频道最多保留的源条数'
+        type: string
+        default: '6'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: iptv-sources-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 准备 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 抓取并合并最新节目源
+        env:
+          IPTVKK_INCLUDE_NEW: ${{ github.event.inputs.include_new || 'false' }}
+          IPTVKK_MAX_PER_CHANNEL: ${{ github.event.inputs.max_per_channel || '6' }}
+        run: python scripts/update_sources.py
+
+      - name: 提交变更
+        run: |
+          set -e
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ -z "$(git status --porcelain iptv.txt ipv4.txt)" ]; then
+            echo "::notice::本次没有可更新的节目源，跳过提交"
+            exit 0
+          fi
+          git add iptv.txt ipv4.txt
+          git commit -m "chore: 每日更新节目源 $(TZ=Asia/Shanghai date +'%Y-%m-%d %H:%M')"
+          git push
