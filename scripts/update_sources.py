@@ -36,13 +36,13 @@ HTTP_TIMEOUT = 30
 # 每个频道最终保留几个源
 TOP_N = int(os.environ.get("IPTVKK_TOP_N", "5"))
 # 每个频道最多拿多少个候选去测速（控制总耗时）
-CANDIDATES_PER_CHANNEL = int(os.environ.get("IPTVKK_CANDIDATES", "15"))
+CANDIDATES_PER_CHANNEL = int(os.environ.get("IPTVKK_CANDIDATES", "25"))
 # 测速并发数
-WORKERS = int(os.environ.get("IPTVKK_WORKERS", "24"))
+WORKERS = int(os.environ.get("IPTVKK_WORKERS", "32"))
 # 单个源拉流测速的秒数
 SPEED_SECONDS = int(os.environ.get("IPTVKK_SPEED_SECONDS", "3"))
 # 总时间预算（秒）：到点就停止测速，用已完成的结果出文件，保证一定有产出
-MAX_SECONDS = int(os.environ.get("IPTVKK_MAX_SECONDS", "1500"))
+MAX_SECONDS = int(os.environ.get("IPTVKK_MAX_SECONDS", "1800"))
 # 输出文件（改成 iptv.txt / ipv4.txt 即可直接覆盖原文件）
 OUTPUT_FILE = os.environ.get("IPTVKK_OUTPUT", "精选源.txt")
 # 是否在 URL 后面用 $ 备注带上速度/分辨率
@@ -50,12 +50,12 @@ SHOW_METRICS = os.environ.get("IPTVKK_SHOW_METRICS", "1") != "0"
 # 调试用：跳过真实测速，只验证筛选和输出格式
 DRY_RUN = os.environ.get("IPTVKK_DRY_RUN", "0") == "1"
 
-# 预检：HTTP 连通性快速探测，连不上的直接淘汰，避免浪费后面的完整测速
+# 预检：TCP 连通性快速探测，连不上的直接淘汰，避免浪费后面的完整测速
 PREFILTER = os.environ.get("IPTVKK_PREFILTER", "1") != "0"
-PREFILTER_TIMEOUT = int(os.environ.get("IPTVKK_PREFILTER_TIMEOUT", "6"))
+PREFILTER_TIMEOUT = int(os.environ.get("IPTVKK_PREFILTER_TIMEOUT", "4"))
 PREFILTER_WORKERS = int(os.environ.get("IPTVKK_PREFILTER_WORKERS", "48"))
 
-FFPROBE_TIMEOUT = 8
+FFPROBE_TIMEOUT = 6
 FFMPEG_TIMEOUT = SPEED_SECONDS + 8
 
 UPSTREAMS = [
@@ -175,17 +175,18 @@ def run(cmd, timeout):
 
 
 def reachable(url):
-    """HTTP 连通性快速探测：只连一下读一小段，连不上就淘汰"""
-    if url.lower().startswith("rtsp://"):
-        return True  # rtsp 不走 HTTP 预检，交给 ffmpeg 判断
+    """TCP 快速探测：4 秒内能三次握手成功即放行，让后面的测速做最终判断。
+    用 socket 而不是发 HTTP 请求，避免对 CDN 直播流做 Range 请求时被拒/挂起。"""
     try:
-        req = urllib.request.Request(url, headers={
-            "User-Agent": UA,
-            "Range": "bytes=0-16384",
-            "Accept": "*/*",
-        })
-        with urllib.request.urlopen(req, timeout=PREFILTER_TIMEOUT) as r:
-            r.read(2048)
+        from urllib.parse import urlparse
+        import socket as _socket
+        pu = urlparse(url)
+        host = pu.hostname
+        if not host:
+            return False
+        default_port = {"https": 443, "rtsp": 554, "rtmp": 1935}.get(pu.scheme, 80)
+        port = pu.port or default_port
+        with _socket.create_connection((host, port), timeout=PREFILTER_TIMEOUT):
             return True
     except Exception:
         return False
