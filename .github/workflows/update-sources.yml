@@ -13,11 +13,11 @@ on:
       candidates:
         description: '每个频道参与测速的候选数量（越大越慢）'
         type: string
-        default: '15'
+        default: '25'
       max_seconds:
         description: '总时间预算（秒），到点用已有结果出文件'
         type: string
-        default: '1500'
+        default: '1800'
       output:
         description: '输出文件名'
         type: string
