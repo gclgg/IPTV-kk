@@ -11,9 +11,13 @@ on:
         type: string
         default: '5'
       candidates:
-        description: '每个频道参与测速的候选数量'
+        description: '每个频道参与测速的候选数量（越大越慢）'
         type: string
-        default: '40'
+        default: '15'
+      max_seconds:
+        description: '总时间预算（秒），到点用已有结果出文件'
+        type: string
+        default: '1500'
       output:
         description: '输出文件名'
         type: string
@@ -51,7 +55,8 @@ jobs:
       - name: 抓取、测速、排名并生成精选源
         env:
           IPTVKK_TOP_N: ${{ github.event.inputs.top_n || '5' }}
-          IPTVKK_CANDIDATES: ${{ github.event.inputs.candidates || '40' }}
+          IPTVKK_CANDIDATES: ${{ github.event.inputs.candidates || '15' }}
+          IPTVKK_MAX_SECONDS: ${{ github.event.inputs.max_seconds || '1500' }}
           IPTVKK_OUTPUT: ${{ github.event.inputs.output || '精选源.txt' }}
         run: |
           # 兼容脚本放在 scripts/ 或仓库根两种布局
