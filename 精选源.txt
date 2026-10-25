@@ -1,12 +1,10 @@
-更新时间: 2026-10-25 07:51:56（北京时间）
+更新时间: 2026-10-26 07:40:46（北京时间）
 
 凤凰卫视,#genre#
-凤凰卫视,http://bobohome.ignorelist.com:20247/fengshows?id=2.m3u8$199KB/s 720p 评分33.5
-凤凰卫视,http://bobohome.ignorelist.com:20247/fengshows?id=3.m3u8$136KB/s 720p 评分33.0
-凤凰卫视,http://183.237.95.108:9901/tsfile/live/1103_1.m3u8?key=txiptv&playlive=0&authid=0$280KB/s 576p 评分26.1
-凤凰卫视,http://218.206.193.218:8888/hls/67/index.m3u8$270KB/s 576p 评分26.0
-凤凰卫视,http://218.206.193.218:8888/hls/66/index.m3u8$269KB/s 576p 评分26.0
+凤凰卫视,http://bobohome.ignorelist.com:20247/fengshows?id=3.m3u8$178KB/s 720p 评分33.3
+凤凰卫视,http://bobohome.ignorelist.com:20247/fengshows?id=2.m3u8$174KB/s 720p 评分33.3
+凤凰卫视,http://120.198.95.220:9901/tsfile/live/1036_1.m3u8?key=txiptv$202KB/s 576p 评分25.5
+凤凰卫视,http://183.237.95.108:9901/tsfile/live/1103_1.m3u8?key=txiptv&playlive=0&authid=0$131KB/s 576p 评分25.0
 
 凤凰资讯,#genre#
-凤凰资讯台,http://bobohome.ignorelist.com:20247/fengshows?id=1.m3u8$115KB/s 720p 评分32.8
-凤凰资讯台,http://120.198.95.220:9901/tsfile/live/1037_1.m3u8?key=txiptv$303KB/s 576p 评分26.2
+凤凰资讯台,http://bobohome.ignorelist.com:20247/fengshows?id=1.m3u8$170KB/s 720p 评分33.2
