@@ -1,8 +1,8 @@
-更新时间: 2026-11-18 11:14:29（北京时间）
+更新时间: 2026-11-19 10:52:56（北京时间）
 
 凤凰卫视,#genre#
-凤凰卫视,http://bobohome.ignorelist.com:20247/fengshows?id=3.m3u8$142KB/s 720p 评分33.0
-凤凰卫视,http://bobohome.ignorelist.com:20247/fengshows?id=2.m3u8$92KB/s 720p 评分32.7
+凤凰卫视,http://bobohome.ignorelist.com:20247/fengshows?id=2.m3u8$265KB/s 720p 评分33.9
+凤凰卫视,http://bobohome.ignorelist.com:20247/fengshows?id=3.m3u8$255KB/s 720p 评分33.9
 
 凤凰资讯,#genre#
-凤凰资讯台,http://bobohome.ignorelist.com:20247/fengshows?id=1.m3u8$208KB/s 720p 评分33.5
+凤凰资讯台,http://bobohome.ignorelist.com:20247/fengshows?id=1.m3u8$280KB/s 720p 评分34.1
