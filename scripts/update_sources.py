@@ -5,7 +5,8 @@ IPTV-kk 精选源更新脚本（央视频道 / 凤凰卫视 / 凤凰资讯）
 
 流程：
   1. 从 UPSTREAMS 配置的公开上游抓取直播源（支持 txt / m3u）
-  2. 只保留「央视频道、凤凰卫视、凤凰资讯」三类，频道名统一标准化
+  2. 只保留「央视频道、凤凰卫视、凤凰资讯」三类，且仅限中国移动 / 中国联通线路，
+     频道名统一标准化
   3. 并发用 ffprobe 读分辨率 + ffmpeg 拉流测速
   4. 按「速度分(0-60) + 分辨率分(0-40)」总分排名，每个频道只保留前 TOP_N 个源
   5. 结果写入 OUTPUT_FILE
@@ -49,6 +50,8 @@ OUTPUT_FILE = os.environ.get("IPTVKK_OUTPUT", "精选源.txt")
 SHOW_METRICS = os.environ.get("IPTVKK_SHOW_METRICS", "1") != "0"
 # 调试用：跳过真实测速，只验证筛选和输出格式
 DRY_RUN = os.environ.get("IPTVKK_DRY_RUN", "0") == "1"
+# 只拉取这些运营商的源；逗号分隔。留空表示不按运营商过滤
+CARRIERS = tuple(c.strip() for c in os.environ.get("IPTVKK_CARRIERS", "移动,联通").split(",") if c.strip())
 
 # 预检：TCP 连通性快速探测，连不上的直接淘汰，避免浪费后面的完整测速
 PREFILTER = os.environ.get("IPTVKK_PREFILTER", "1") != "0"
@@ -63,6 +66,10 @@ UPSTREAMS = [
     "https://raw.githubusercontent.com/fanmingming/live/main/tv/m3u/index.m3u",
     "https://raw.githubusercontent.com/YanG-1989/m3u/main/Gather.m3u",
     "https://raw.githubusercontent.com/kimwang1978/collect-tv-txt/main/bbxx365_lite.txt",
+    # 下面三个补充凤凰源（均为移动线路：chinamobile.com / GD_CUCC 等）
+    "https://raw.githubusercontent.com/YipSzeho/PHTV/master/live.m3u",
+    "https://raw.githubusercontent.com/imDazui/Tvlist-awesome-m3u-m3u8/master/m3u/%E5%B9%BF%E8%A5%BF%E7%A7%BB%E5%8A%A8.m3u",
+    "https://raw.githubusercontent.com/jk2024988/TV2024/main/000.m3u",
 ]
 
 START = time.time()  # 用于打印各阶段耗时
@@ -72,10 +79,36 @@ BAD_KW = ("disclaimer", "about", "免责", "readme", "github.com", "gitee.com", 
 
 GROUP_ORDER = ["央视频道", "凤凰卫视", "凤凰资讯"]
 
+# 运营商识别关键词：先看分组名 / 频道名 / URL 里的显式标记。
+# MOBILE_KW 里的 cmvideo.cn 是移动咪咕的流媒体域名。
+MOBILE_KW = (
+    "移动", "cmcc", "chinamobile", "china mobile", "咪咕", "migu",
+    "cmvideo.cn", "10086.cn",
+)
+UNICOM_KW = (
+    "联通", "cucc", "chinaunicom", "china unicom", "unicom", "10010.cn",
+)
+# 明确属于其它运营商的一律排除，避免误收
+OTHER_CARRIER_KW = (
+    "电信", "telecom", "ctcc", "chinatelecom", "10000.cn", "189.cn",
+)
+
 
 # ---------------------------------------------------------------------------
-# 频道识别与标准化 -> (分组, 标准频道名) 或 None
+# 运营商与频道识别
 # ---------------------------------------------------------------------------
+def carrier_of(group, name, url):
+    """返回 '移动' / '联通'；无明确运营商标记或属于其它运营商则返回 None。"""
+    text = f"{group or ''} {name or ''} {url or ''}".lower()
+    if any(k in text for k in OTHER_CARRIER_KW):
+        return None
+    if any(k in text for k in MOBILE_KW):
+        return "移动"
+    if any(k in text for k in UNICOM_KW):
+        return "联通"
+    return None
+
+
 def canon(name):
     n = (name or "").strip()
     if not n:
@@ -265,8 +298,9 @@ def score(width, height, kbps):
 # 主流程
 # ---------------------------------------------------------------------------
 def collect_candidates():
-    """返回 {(分组, 频道名): [url, ...]}"""
+    """返回 {(分组, 频道名): [url, ...]}，只含央视/凤凰 + 目标运营商的源"""
     buckets, seen = {}, set()
+    carrier_stat = {"移动": 0, "联通": 0}
     for url in UPSTREAMS:
         try:
             items = parse_upstream(url, fetch(url))
@@ -274,17 +308,23 @@ def collect_candidates():
         except Exception as e:
             print(f"  ✘ {url} 抓取失败：{e}")
             continue
-        for _g, name, u in items:
+        for g, name, u in items:
             u = u.strip()
             if not is_valid(u):
                 continue
             c = canon(name)
             if not c:
                 continue
+            carrier = carrier_of(g, name, u)
+            if carrier is None or (CARRIERS and carrier not in CARRIERS):
+                continue
             if u in seen:
                 continue
             seen.add(u)
             buckets.setdefault(c, []).append(u)
+            carrier_stat[carrier] += 1
+    scope = ", ".join(CARRIERS) if CARRIERS else "全部"
+    print(f"  运营商过滤（仅 {scope}）：移动 {carrier_stat['移动']} 条，联通 {carrier_stat['联通']} 条")
     return buckets
 
 
@@ -341,6 +381,7 @@ def main():
     now = datetime.now(CST).strftime("%Y-%m-%d %H:%M:%S")
     print(f"IPTV-kk 精选源更新 | {now}（北京时间）")
     print(f"  时间预算 {MAX_SECONDS}s，候选上限 {CANDIDATES_PER_CHANNEL}/频道，并发 {WORKERS}")
+    print(f"  频道范围：央视 + 凤凰；线路范围：{', '.join(CARRIERS) if CARRIERS else '全部'}")
     if DRY_RUN:
         print("!! DRY_RUN 模式：不做真实测速")
 
