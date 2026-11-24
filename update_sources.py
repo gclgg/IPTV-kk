@@ -5,7 +5,9 @@ IPTV-kk 节目源自动更新脚本
 
 工作逻辑：
   1. 从 TARGETS 里配置的公开上游源抓取最新直播源（支持 txt / m3u 两种格式）
-  2. 以仓库现有的分组结构和频道清单为骨架，用上游抓到的同名频道源刷新
+  2. 以仓库现有的分组结构和频道清单为骨架，用上游抓到的同名频道源刷新；
+     从上游拉取的源仅限「央视 / 凤凰频道」且仅限中国移动 / 中国联通线路，
+     仓库原有条目（含组播保留源）不会被移除
      每条频道的最终来源顺序：仓库保留源（组播等） > 上游新源 > 仓库旧公网源
   3. 按 URL 去重、过滤明显无效的条目（广告视频、说明文件等）、按频道条数上限裁剪
   4. 只有新增条目达到 MIN_NEW_ENTRIES 才写回文件，避免上游抽风时污染仓库
@@ -33,6 +35,8 @@ INCLUDE_NEW_CHANNELS = os.environ.get("IPTVKK_INCLUDE_NEW", "false").lower() == 
 MIN_NEW_ENTRIES = int(os.environ.get("IPTVKK_MIN_NEW", "5"))
 # 环境变量可整体覆盖单频道条数上限
 MAX_OVERRIDE = os.environ.get("IPTVKK_MAX_PER_CHANNEL", "").strip()
+# 只拉取这些运营商的源；逗号分隔。留空表示不按运营商过滤
+CARRIERS = tuple(c.strip() for c in os.environ.get("IPTVKK_CARRIERS", "移动,联通").split(",") if c.strip())
 
 TARGETS = {
     "iptv.txt": {
@@ -47,6 +51,8 @@ TARGETS = {
             "https://raw.githubusercontent.com/fanmingming/live/main/tv/m3u/itv.m3u",
             "https://raw.githubusercontent.com/fanmingming/live/main/tv/m3u/index.m3u",
             "https://raw.githubusercontent.com/kimwang1978/collect-tv-txt/main/bbxx365_lite.txt",
+            # 补充凤凰源（移动线路，文件小不拖慢抓取）
+            "https://raw.githubusercontent.com/YipSzeho/PHTV/master/live.m3u",
         ],
     },
     "ipv4.txt": {
@@ -59,6 +65,8 @@ TARGETS = {
             "https://raw.githubusercontent.com/YanG-1989/m3u/main/Gather.m3u",
             "https://raw.githubusercontent.com/fanmingming/live/main/tv/m3u/index.m3u",
             "https://raw.githubusercontent.com/kimwang1978/collect-tv-txt/main/bbxx365_lite.txt",
+            # 补充凤凰源（移动线路，文件小不拖慢抓取）
+            "https://raw.githubusercontent.com/YipSzeho/PHTV/master/live.m3u",
         ],
     },
 }
@@ -66,6 +74,20 @@ TARGETS = {
 # 明显不是直播源的条目
 BAD_EXT = (".mp4", ".mkv", ".avi", ".flv", ".png", ".jpg", ".jpeg", ".gif", ".webp")
 BAD_KW = ("disclaimer", "about", "免责", "readme", "github.com", "gitee.com", "gitlab.com")
+
+# 运营商识别关键词：先看分组名 / 频道名 / URL 里的显式标记。
+# MOBILE_KW 里的 cmvideo.cn 是移动咪咕的流媒体域名。
+MOBILE_KW = (
+    "移动", "cmcc", "chinamobile", "china mobile", "咪咕", "migu",
+    "cmvideo.cn", "10086.cn",
+)
+UNICOM_KW = (
+    "联通", "cucc", "chinaunicom", "china unicom", "unicom", "10010.cn",
+)
+# 明确属于其它运营商的一律排除，避免误收
+OTHER_CARRIER_KW = (
+    "电信", "telecom", "ctcc", "chinatelecom", "10000.cn", "189.cn",
+)
 
 GROUP_TIME = "更新时间"
 
@@ -83,6 +105,28 @@ def norm_name(name):
     s = re.sub(r"[\s\-_·•]+", "", s)
     s = re.sub(r"(高清|超清|标清|4k|8k|hd|fhd|sd|1080p|720p|50fps|hevc)+$", "", s, flags=re.I)
     return s.lower().strip()
+
+
+def is_target_channel(name):
+    """只从上游拉取央视频道与凤凰频道（含繁体「鳳凰」与 Phoenix）"""
+    n = (name or "").strip().lower()
+    if "凤凰" in n or "鳳凰" in n or "phoenix" in n:
+        return True
+    if "cctv" in n or "央视" in n:
+        return True
+    return False
+
+
+def carrier_of(group, name, url):
+    """返回 '移动' / '联通'；无明确运营商标记或属于其它运营商则返回 None。"""
+    text = f"{group or ''} {name or ''} {url or ''}".lower()
+    if any(k in text for k in OTHER_CARRIER_KW):
+        return None
+    if any(k in text for k in MOBILE_KW):
+        return "移动"
+    if any(k in text for k in UNICOM_KW):
+        return "联通"
+    return None
 
 
 def is_valid(url, schemes):
@@ -236,15 +280,22 @@ def update_target(path, cfg):
         print(f"  !! {path} 所有上游均不可用，放弃本次更新")
         return False, 0
 
-    # 先把上游新源按频道归拢
+    # 先把上游新源按频道归拢；只收央视/凤凰频道 + 移动/联通线路
     fresh = {}       # 归一化频道名 -> [(name, url)]
     new_blocks = {}  # 新频道的分组 -> [(name, url)]
+    carrier_stat = {"移动": 0, "联通": 0}
     for group, name, url in fetched:
         if not is_valid(url, schemes):
             continue
         key = norm_name(name)
         if not key:
             continue
+        if not is_target_channel(name):
+            continue
+        carrier = carrier_of(group, name, url)
+        if carrier is None or (CARRIERS and carrier not in CARRIERS):
+            continue
+        carrier_stat[carrier] += 1
         if key in index:
             bucket = fresh.setdefault(key, [])
             if len(bucket) < limit:
@@ -253,6 +304,8 @@ def update_target(path, cfg):
             b = new_blocks.setdefault(group or "新增频道", [])
             if len(b) < limit * 20:
                 b.append((name, url))
+    scope = ", ".join(CARRIERS) if CARRIERS else "全部"
+    print(f"  上游过滤（仅央视/凤凰，仅 {scope}）：移动 {carrier_stat['移动']} 条，联通 {carrier_stat['联通']} 条")
 
     # 逐频道重组：保留源 > 上游新源 > 旧公网源，超限从尾部裁剪
     added = 0
@@ -308,6 +361,7 @@ def update_target(path, cfg):
 
 def main():
     print(f"IPTV-kk 节目源更新 | {now_str()}（北京时间）")
+    print(f"  频道范围：央视 + 凤凰；线路范围：{', '.join(CARRIERS) if CARRIERS else '全部'}")
     total_added, changed = 0, []
     for path, cfg in TARGETS.items():
         written, added = update_target(path, cfg)
